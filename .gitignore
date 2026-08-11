@@ -1,0 +1,6 @@
+bin/
+obj/
+*.user
+
+# 發布用的打包產物（走 GitHub Release 資產，不進版控）
+*.zip
