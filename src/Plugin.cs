@@ -32,7 +32,7 @@ namespace SpiritValeSkillBuilds
     {
         public const string GUID = "local.spiritvale.skillbuilds";
         public const string NAME = "SpiritVale Skill Builds (Build 切換)";
-        public const string VERSION = "1.0.0";
+        public const string VERSION = "1.0.1";
 
         internal static ManualLogSource Logger;
 
@@ -82,6 +82,8 @@ namespace SpiritValeSkillBuilds
             CfgDiagnostic = Config.Bind("3.診斷", "診斷模式", false,
                 "把快照內容、還原狀態機的每一步判定寫進 log。回報問題時再開。");
 
+            CleanOrphanedConfig();
+
             Store.Init();
 
             // 啟動簽名驗證（MarketPrice 紅線 4）：名稱查找＋參數型別名比對，不硬引用。
@@ -106,6 +108,34 @@ namespace SpiritValeSkillBuilds
 
             Logger.LogInfo($"{NAME} v{VERSION} 已載入。Build {CfgCount.Value} 組，" +
                 $"已存角色數：{Store.CharacterCount}");
+        }
+
+        /// <summary>
+        /// 清掉歷代改名留下的孤兒設定鍵（素質點→能力點、預設組數量→Build 數量、自由洗點…）。
+        /// BepInEx 認不得的鍵會原封留在 cfg 裡，於是升級者會在同一個區段同時看到
+        /// 「素質點 = true」和「能力點 = false」而誤會。純美觀問題，插件本來就不讀它們。
+        /// OrphanedEntries 是 protected internal，只能反射拿；拿不到就靜靜跳過。
+        /// </summary>
+        private void CleanOrphanedConfig()
+        {
+            try
+            {
+                var prop = typeof(ConfigFile).GetProperty("OrphanedEntries",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Public);
+                if (prop?.GetValue(Config) is System.Collections.IDictionary dict && dict.Count > 0)
+                {
+                    int n = dict.Count;
+                    dict.Clear();
+                    Config.Save();
+                    Logger.LogInfo($"[Build] 已清除 {n} 個舊版遺留的設定鍵。");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug($"[Build] 清理舊設定鍵失敗（不影響功能）：{ex.Message}");
+            }
         }
 
         /// <summary>逐一掛載 patch，任一失敗只記警告不中斷 —— 遊戲改版時降級而非崩潰。</summary>
@@ -930,10 +960,15 @@ namespace SpiritValeSkillBuilds
         private static List<PresetSlot> _allSlots;  // 完整清單，總驗收與回報用
         private static int _retry;
 
-        private static List<GearAction> _gear;      // 換裝佇列
+        private static List<GearAction> _gear;      // 換裝佇列（補裝時會被換成重試清單）
         private static int _gearIdx;
         private static bool _gearSent;
         private static int _gearRound;
+        /// <summary>
+        /// 第一輪算出來要換的件數＝「跟快照有出入的件數」。回報用。
+        /// 不能拿 `_gear.Count`——補裝時它會被換成重試清單，件數會少算。
+        /// </summary>
+        private static int _gearPlanned;
         private static readonly List<string> _gearMissing = new List<string>();
 
         private const float StepTimeout = 10f;      // 套用點法／能力點單步逾時
@@ -980,6 +1015,7 @@ namespace SpiritValeSkillBuilds
             _retry = 0;
             _skippedAttr = null;
             _gear = null;
+            _gearPlanned = 0;
             _gearMissing.Clear();
 
             // 戰鬥中伺服器會拒絕換裝（CheckCanChangeGear），先擋下免得換到一半失敗
@@ -1184,6 +1220,7 @@ namespace SpiritValeSkillBuilds
             _gearIdx = 0;
             _gearSent = false;
             _gearRound = 0;
+            _gearPlanned = _gear.Count;   // 只在這裡設，補裝輪不覆寫
             _nextAssignAt = Time.unscaledTime;   // 別沿用上一輪的節流時間
 
             if (_gear.Count == 0) { BeginAssign(); return; }
@@ -1444,19 +1481,24 @@ namespace SpiritValeSkillBuilds
                 ? $"　裝備未還原：{string.Join("、", _gearMissing)}" : "";
             string attrNote = _skippedAttr != null ? $"　{_skippedAttr}" : "";
 
+            // 換到位的件數＝第一輪算出的差異件數 − 最後仍缺的件數。
+            // 有缺漏時也要報——只講「缺了什麼」不講「做成了什麼」會讓人以為根本沒換裝。
+            int gearOk = Math.Max(0, _gearPlanned - _gearMissing.Count);
+            string gearDone = gearOk > 0 ? $"／換裝 {gearOk} 件" : "";
+
             if ((failed == null || failed.Count == 0) && _gearMissing.Count == 0 && _skippedAttr == null)
             {
-                Plugin.Logger.LogInfo($"[Build] 還原完成：「{_target.Name}」{_target.Skills.Count} 技能／{total} 快捷格" +
-                    (_gear != null && _gear.Count > 0 ? $"／換裝 {_gear.Count} 件" : ""));
-                UiRow.SetStatus($"還原完成：「{_target.Name}」（{_target.Skills.Count} 技能／{total} 快捷格" +
-                    (_gear != null && _gear.Count > 0 ? $"／換裝 {_gear.Count} 件）" : "）"));
+                Plugin.Logger.LogInfo($"[Build] 還原完成：「{_target.Name}」{_target.Skills.Count} 技能／{total} 快捷格{gearDone}");
+                UiRow.SetStatus($"還原完成：「{_target.Name}」（{_target.Skills.Count} 技能／{total} 快捷格{gearDone}）");
             }
             else
             {
                 string list = failed == null || failed.Count == 0
                     ? "" : "未綁上：" + string.Join("、", failed.Select(f => $"#{f.Slot + 1}={f.Id}"));
-                Plugin.Logger.LogWarning($"[Build] 還原完成但有缺漏：{list}{gearNote}{attrNote}");
-                UiRow.SetStatus($"還原完成：{_target.Skills.Count} 技能／快捷 {ok}/{total}。{list}{gearNote}{attrNote}", true);
+                Plugin.Logger.LogWarning($"[Build] 還原完成：{_target.Skills.Count} 技能／快捷 {ok}/{total}{gearDone}。" +
+                    $"有缺漏：{list}{gearNote}{attrNote}");
+                UiRow.SetStatus($"還原完成：{_target.Skills.Count} 技能／快捷 {ok}/{total}{gearDone}。" +
+                    $"{list}{gearNote}{attrNote}", true);
             }
 
             _step = Step.Idle;
