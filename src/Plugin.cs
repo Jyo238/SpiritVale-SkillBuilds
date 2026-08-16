@@ -17,8 +17,8 @@ using UnityEngine.UI;
 namespace SpiritValeSkillBuilds
 {
     /// <summary>
-    /// Build 記憶：把「技能點＋能力點＋快捷列＋裝備／神器／魔導書」存成 Build，一鍵還原。
-    ///   還原順序：套用點法 → 配能力點 → 換裝 → 綁快捷列。
+    /// Build 記憶：把「技能點＋能力點＋快捷列＋裝備／神器／魔導書＋時裝／外觀」存成 Build，一鍵還原。
+    ///   還原順序：套用點法 → 配能力點 → 換裝 → 時裝／外觀 → 綁快捷列。
     ///   全程不呼叫任何「重置」——重置是 Waybinder NPC 專屬的入口，玩家自己去按。
     ///   ・技能視窗內多一排 Build 按鈕：左鍵＝還原（3 秒內再點一次確認）、Shift+左鍵＝儲存目前配置
     ///   ・還原流程：直接送出最終點法 → 配能力點 → 換裝 → 逐格綁快捷列，全程呼叫遊戲自己的
@@ -32,7 +32,7 @@ namespace SpiritValeSkillBuilds
     {
         public const string GUID = "local.spiritvale.skillbuilds";
         public const string NAME = "SpiritVale Skill Builds (Build 切換)";
-        public const string VERSION = "1.0.1";
+        public const string VERSION = "1.1.0";
 
         internal static ManualLogSource Logger;
 
@@ -41,10 +41,13 @@ namespace SpiritValeSkillBuilds
         internal static ConfigEntry<bool> CfgAttributes;
         internal static ConfigEntry<bool> CfgGear;
         internal static ConfigEntry<bool> CfgClearUnlisted;
+        internal static ConfigEntry<bool> CfgCosmetics;
+        internal static ConfigEntry<bool> CfgAppearance;
         internal static ConfigEntry<float> CfgPosX;
         internal static ConfigEntry<float> CfgPosY;
         internal static ConfigEntry<string> CfgStorePath;
         internal static ConfigEntry<bool> CfgDiagnostic;
+        internal static ConfigEntry<bool> CfgRemountGrimoires;
 
         public override void Load()
         {
@@ -65,11 +68,20 @@ namespace SpiritValeSkillBuilds
                 "所以快照若需要調降某項能力點，本插件會跳過能力點並提示你先去 NPC 重置。");
             CfgGear = Config.Bind("2.新組預設勾選", "裝備神器魔導書", true,
                 "新存的 Build，預設要不要勾裝備／神器／魔導書。" +
-                "還原順序是 套用點法→配能力點→穿裝備→綁快捷列：裝備先回到身上，" +
+                "還原順序是 套用點法→配能力點→穿裝備→時裝／外觀→綁快捷列：裝備先回到身上，" +
                 "裝備賦予的技能才綁得上快捷列。");
             CfgClearUnlisted = Config.Bind("2.新組預設勾選", "卸下快照沒有的裝備", true,
-                "新存的 Build，預設要不要勾「卸下快照沒有的裝備欄／神器欄」＝忠實還原當時的樣子；" +
+                "新存的 Build，預設要不要勾「卸下快照沒有的裝備欄／神器欄／時裝欄」＝忠實還原當時的樣子；" +
                 "不勾＝只穿上快照有的，其餘保持現狀。");
+            CfgCosmetics = Config.Bind("2.新組預設勾選", "時裝", false,
+                "新存的 Build，預設要不要勾時裝（衣櫃裡套用的外裝／武器外觀／坐騎／寵物／特效等）。" +
+                "**預設不勾**：時裝通常是「人」的打扮不是「流派」的一部分，存完 Build 之後再換的坐騎、寵物" +
+                "會在還原時被換回快照當時的樣子。想每組 Build 各有一套打扮的人再打勾（右鍵該組 → 編輯面板）。" +
+                "還原走遊戲衣櫃的「套用」同一條路，只能套用衣櫃裡已擁有的時裝。");
+            CfgAppearance = Config.Bind("2.新組預設勾選", "外觀", false,
+                "新存的 Build，預設要不要勾外觀（人物長相：膚色／髮型／髮色／眉／鬍／嘴／眼／眼色／耳／瞳）。" +
+                "**預設不勾**：理由同時裝——存完 Build 之後改的髮型會在還原時被改回去。" +
+                "還原走衣櫃「外觀」頁籤／造型師 NPC 的同一條路，免費、無次數限制。");
             CfgPosX = Config.Bind("1.操作", "按鈕列水平微調", 0f,
                 "按鈕列預設貼在技能視窗右上角。往左移填負數、往右移填正數（單位約等於 1440p 下的像素）。");
             CfgPosY = Config.Bind("1.操作", "按鈕列垂直微調", 0f,
@@ -81,6 +93,10 @@ namespace SpiritValeSkillBuilds
                 "注意：不要兩台同時開遊戲改 Build，雲端同步會打架。");
             CfgDiagnostic = Config.Bind("3.診斷", "診斷模式", false,
                 "把快照內容、還原狀態機的每一步判定寫進 log。回報問題時再開。");
+            CfgRemountGrimoires = Config.Bind("3.診斷", "換裝後重掛魔導書", false,
+                "實驗選項：還原的換裝階段結束後，把身上的魔導書逐本「卸下再裝回」（跟你手動拔掉重裝一樣的兩個動作）。" +
+                "有玩家回報切 Build 後魔導書的「替換」效果（例如 Elementalist 的 Elemental Attunement）沒接上、" +
+                "要手動拔掉重裝才會好——先用這個擋著；根因查清楚後這個選項會拿掉。每本多送 2 個 RPC。");
 
             CleanOrphanedConfig();
 
@@ -231,6 +247,13 @@ namespace SpiritValeSkillBuilds
         public int Refine { get; set; }
     }
 
+    /// <summary>時裝一格：CosmeticSlot 名稱（Head/Chest/Mount/Pet/Aura…）＋衣櫃物品 id。</summary>
+    internal class PresetCosmetic
+    {
+        public string Slot { get; set; }
+        public string Id { get; set; }
+    }
+
     /// <summary>
     /// 這一組還原時「要動哪些東西」。
     /// 儲存永遠是全部記下來，這裡只控制還原——所以隨時改主意都不用重存快照。
@@ -243,7 +266,34 @@ namespace SpiritValeSkillBuilds
         public bool Equips { get; set; } = true;
         public bool Artifacts { get; set; } = true;
         public bool Grimoires { get; set; } = true;
+        /// <summary>
+        /// 時裝／外觀：類別預設 **false**——舊版 JSON 沒有這兩個欄位，反序列化會吃這裡的預設值；
+        /// 舊 Build 重存後若預設 true，玩家的長相／坐騎會在還原時被靜靜換掉。新建 Build 依 cfg 決定。
+        /// </summary>
+        public bool Cosmetics { get; set; } = false;
+        public bool Appearance { get; set; } = false;
         public bool ClearUnlisted { get; set; } = true;
+
+        /// <summary>新建 Build 的預設勾選（吃 cfg「2.新組預設勾選」）。</summary>
+        internal static PresetFlags NewDefaults() => new PresetFlags
+        {
+            Skills = true,
+            Hotbar = true,
+            Attributes = Plugin.CfgAttributes?.Value ?? false,
+            Equips = Plugin.CfgGear?.Value ?? true,
+            Artifacts = Plugin.CfgGear?.Value ?? true,
+            Grimoires = Plugin.CfgGear?.Value ?? true,
+            Cosmetics = Plugin.CfgCosmetics?.Value ?? false,
+            Appearance = Plugin.CfgAppearance?.Value ?? false,
+            ClearUnlisted = Plugin.CfgClearUnlisted?.Value ?? true,
+        };
+
+        internal PresetFlags Clone() => new PresetFlags
+        {
+            Skills = Skills, Hotbar = Hotbar, Attributes = Attributes, Equips = Equips,
+            Artifacts = Artifacts, Grimoires = Grimoires, Cosmetics = Cosmetics,
+            Appearance = Appearance, ClearUnlisted = ClearUnlisted,
+        };
     }
 
     internal class Preset
@@ -257,6 +307,13 @@ namespace SpiritValeSkillBuilds
         public List<PresetGear> Grimoires { get; set; } = new List<PresetGear>();
         /// <summary>能力點：StatType 名稱 → 值（Str/Vit/Agi/Dex/Int/Luk）。</summary>
         public Dictionary<string, int> Attributes { get; set; } = new Dictionary<string, int>();
+        /// <summary>
+        /// 時裝（衣櫃套用的外裝／武器外觀／坐騎／寵物／特效…）。
+        /// **刻意不給預設值**：null＝舊快照沒記過（整段跳過），空清單＝當時一件都沒穿（會全卸）。
+        /// </summary>
+        public List<PresetCosmetic> Cosmetics { get; set; }
+        /// <summary>外觀（長相）：欄位名 → 值（BodyColor/Hair/HairColor/Brow/Beard/Mouth/Eye/EyeColor/Ears/Iris）。null＝舊快照沒記。</summary>
+        public Dictionary<string, int> Appearance { get; set; }
         public string Loadout { get; set; }
         public string SavedAt { get; set; }
         public int CharLevel { get; set; }
@@ -390,18 +447,19 @@ namespace SpiritValeSkillBuilds
             if (string.IsNullOrEmpty(uid)) return;
             if (!_all.TryGetValue(uid, out var list) || list == null) return;
             if (index < 0 || index >= list.Count) return;
+            Backup(uid, index, list[index], "刪除");
             list.RemoveAt(index);
             while (list.Count > 0 && list[list.Count - 1] == null) list.RemoveAt(list.Count - 1);
             if (list.Count == 0) _all.Remove(uid);
             Save();
         }
 
-        /// <summary>取這組的勾選設定（空組也給一份可編輯的預設）。</summary>
+        /// <summary>取這組的勾選設定（空組給「新組預設勾選」，跟之後存入時一致）。</summary>
         internal static PresetFlags GetFlags(string uid, int index)
         {
-            if (string.IsNullOrEmpty(uid)) return new PresetFlags();
-            if (!_all.TryGetValue(uid, out var list) || list == null) return new PresetFlags();
-            if (index < 0 || index >= list.Count || list[index] == null) return new PresetFlags();
+            if (string.IsNullOrEmpty(uid)) return PresetFlags.NewDefaults();
+            if (!_all.TryGetValue(uid, out var list) || list == null) return PresetFlags.NewDefaults();
+            if (index < 0 || index >= list.Count || list[index] == null) return PresetFlags.NewDefaults();
             return list[index].Use ?? new PresetFlags();
         }
 
@@ -428,6 +486,23 @@ namespace SpiritValeSkillBuilds
             return list[index]?.Name;
         }
 
+        /// <summary>
+        /// 只更新這組的時裝／外觀資料並把這兩個勾選打開，其餘欄位（含其他勾選）不動；
+        /// 沒這組就什麼都不做。
+        /// </summary>
+        internal static void PutLook(string uid, int index, List<PresetCosmetic> cosmetics,
+            Dictionary<string, int> appearance)
+        {
+            var p = Get(uid, index);
+            if (p == null) return;
+            if (cosmetics != null) p.Cosmetics = cosmetics;
+            if (appearance != null) p.Appearance = appearance;
+            p.Use ??= new PresetFlags();
+            p.Use.Cosmetics = true;
+            p.Use.Appearance = true;
+            Save();
+        }
+
         internal static void Put(string uid, int index, Preset preset)
         {
             if (string.IsNullOrEmpty(uid) || index < 0) return;
@@ -442,6 +517,7 @@ namespace SpiritValeSkillBuilds
             {
                 if (!string.IsNullOrEmpty(list[index].Name)) preset.Name = list[index].Name;
                 if (list[index].Use != null) preset.Use = list[index].Use;
+                Backup(uid, index, list[index], "覆寫");
             }
             list[index] = preset;
             Save();
@@ -451,6 +527,58 @@ namespace SpiritValeSkillBuilds
         {
             try { File.WriteAllText(_path, JsonSerializer.Serialize(_all, JsonOpts)); }
             catch (Exception ex) { Plugin.Logger.LogWarning($"[Build] 寫入 Build 清單失敗：{ex.Message}"); }
+        }
+
+        // ---- 被覆寫／刪除的舊 Build 備份：同資料夾的 *.backup.json，每角色留最近 30 筆 ----
+        //   救回來＝把那筆的 Preset 物件貼回 presets.json 對應位置（純資料檔，關遊戲後手動編輯即可）。
+        //   動機：Shift+左鍵一手滑就把整組蓋掉，之前完全沒有退路（2026-08-16 使用者實錄）。
+
+        private class BackupEntry
+        {
+            public string At { get; set; }
+            public string Reason { get; set; }
+            public int Index { get; set; }
+            public string Name { get; set; }
+            public Preset Preset { get; set; }
+        }
+
+        private const int MaxBackupPerChar = 30;
+
+        internal static string BackupPath => _path == null ? null
+            : Path.Combine(Path.GetDirectoryName(_path) ?? "", Path.GetFileNameWithoutExtension(_path) + ".backup.json");
+
+        private static void Backup(string uid, int index, Preset old, string reason)
+        {
+            // 空殼（只有名字／勾選、沒配置）不值得備份
+            if (old == null || ((old.Skills?.Count ?? 0) == 0 && (old.Assigned?.Count ?? 0) == 0)) return;
+            try
+            {
+                string bp = BackupPath;
+                if (bp == null) return;
+                Dictionary<string, List<BackupEntry>> all = null;
+                if (File.Exists(bp))
+                {
+                    try { all = JsonSerializer.Deserialize<Dictionary<string, List<BackupEntry>>>(File.ReadAllText(bp)); }
+                    catch { all = null; }   // 壞掉就重建，別因為備份檔壞了連正常存檔都卡住
+                }
+                all ??= new Dictionary<string, List<BackupEntry>>(StringComparer.Ordinal);
+                if (!all.TryGetValue(uid, out var list) || list == null) all[uid] = list = new List<BackupEntry>();
+                list.Add(new BackupEntry
+                {
+                    At = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                    Reason = reason,
+                    Index = index,
+                    Name = old.Name,
+                    Preset = old,
+                });
+                while (list.Count > MaxBackupPerChar) list.RemoveAt(0);
+                File.WriteAllText(bp, JsonSerializer.Serialize(all, JsonOpts));
+                Plugin.Logger.LogInfo($"[Build] 已把被{reason}的舊「{old.Name}」（第 {index + 1} 組，{old.SavedAt}）備份到 {bp}");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger.LogWarning($"[Build] 備份舊 Build 失敗（不影響存檔）：{ex.Message}");
+            }
         }
     }
 
@@ -464,6 +592,11 @@ namespace SpiritValeSkillBuilds
 
         private static int _confirmIdx = -1;
         private static float _confirmUntil;
+        private static int _confirmSaveIdx = -1;
+        private static float _confirmSaveUntil;
+
+        /// <summary>還原完成後延遲再印一次診斷（狀態效果是排隊套用的，完成當下不一定落地）。</summary>
+        internal static float PostDumpAt;
 
         internal static void OnUpdate()
         {
@@ -472,6 +605,27 @@ namespace SpiritValeSkillBuilds
             UiRow.Tick(save);
             TickHotkeys(save);
             if (_confirmIdx >= 0 && Time.unscaledTime > _confirmUntil) _confirmIdx = -1;
+            if (_confirmSaveIdx >= 0 && Time.unscaledTime > _confirmSaveUntil) _confirmSaveIdx = -1;
+
+            if (PostDumpAt > 0 && Time.unscaledTime > PostDumpAt)
+            {
+                PostDumpAt = 0;
+                Diag.Dump("完成後 2 秒");
+            }
+
+            // Ctrl+Shift+D：隨時手動印一次狀態元件快照（追魔導書替換問題用）
+            try
+            {
+                if (save != null && !IsTypingInInputField() &&
+                    (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) &&
+                    (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) &&
+                    Input.GetKeyDown(KeyCode.D))
+                {
+                    Diag.Dump("手動 Ctrl+Shift+D");
+                    UiRow.SetStatus("已把狀態元件快照寫進 log（Ctrl+Shift+D）。");
+                }
+            }
+            catch { }
         }
 
         /// <summary>取得本地玩家的 PlayerSave；登入畫面等時機為 null。</summary>
@@ -518,13 +672,27 @@ namespace SpiritValeSkillBuilds
                 return;
             }
 
+            string uid = SafeUid(save);
+
             if (shift)
             {
+                // 覆寫既有 Build 也要點兩次——「Shift+左鍵＝把**目前身上**的一切整組蓋掉那組」
+                // 是實測最容易出事的地方：剛還原完 A、想幫 B 補個時裝就 Shift+點 B，B 的點法就變成 A 的了
+                //（2026-08-16 使用者實錄）。只想更新打扮走右鍵面板的「存打扮」。
+                var existing = Store.Get(uid, index);
+                if (existing != null && !(_confirmSaveIdx == index && Time.unscaledTime <= _confirmSaveUntil))
+                {
+                    _confirmSaveIdx = index;
+                    _confirmSaveUntil = Time.unscaledTime + 3f;
+                    UiRow.SetStatus($"再按一次確認「覆寫 {existing.Name}」——會用你目前身上的技能／裝備／打扮整組蓋掉它" +
+                        "（只想更新打扮：右鍵這組 →「把目前的時裝／外觀存進這組」）", true);
+                    return;
+                }
+                _confirmSaveIdx = -1;
                 SavePreset(save, index);
                 return;
             }
 
-            string uid = SafeUid(save);
             var preset = Store.Get(uid, index);
             if (preset == null)
             {
@@ -595,21 +763,13 @@ namespace SpiritValeSkillBuilds
                 // 快照永遠全記——勾選只管「還原時要不要動」，
                 // 這樣之後改主意不用重存。新組的預設勾選才吃全域設定。
                 SnapshotGear(data, preset);
+                Look.Snapshot(data, preset);
                 preset.Attributes = Attr.Read(data);
                 if (Plugin.CfgDiagnostic.Value)
                     Plugin.Logger.LogInfo("[Build][診斷] 能力點快照：" +
                         string.Join("、", preset.Attributes.Select(kv => $"{kv.Key}={kv.Value}")));
 
-                preset.Use = new PresetFlags
-                {
-                    Skills = true,
-                    Hotbar = true,
-                    Attributes = Plugin.CfgAttributes.Value,
-                    Equips = Plugin.CfgGear.Value,
-                    Artifacts = Plugin.CfgGear.Value,
-                    Grimoires = Plugin.CfgGear.Value,
-                    ClearUnlisted = Plugin.CfgClearUnlisted.Value,
-                };
+                preset.Use = PresetFlags.NewDefaults();
 
                 if (preset.Skills.Count == 0 && preset.Assigned.Count == 0 &&
                     preset.Equips.Count == 0 && preset.Artifacts.Count == 0)
@@ -631,6 +791,8 @@ namespace SpiritValeSkillBuilds
                 string gear = $"／{preset.Equips.Count} 裝備／{preset.Artifacts.Count} 神器" +
                     $"／{preset.Grimoires.Count} 魔導書";
                 if (preset.Attributes.Count > 0) gear += "／能力點";
+                if (preset.Cosmetics != null) gear += $"／{preset.Cosmetics.Count} 時裝";
+                if (preset.Appearance != null && preset.Appearance.Count > 0) gear += "／外觀";
                 UiRow.SetStatus($"已存入「{saved?.Name ?? preset.Name}」：{preset.Skills.Count} 技能／{preset.Assigned.Count} 快捷格{gear}");
             }
             catch (Exception ex)
@@ -822,9 +984,90 @@ namespace SpiritValeSkillBuilds
 
     internal static class Gear
     {
+        internal const string AccL = "AccessoryLeft";
+        internal const string AccR = "AccessoryRight";
+
+        internal static bool IsAccessorySlot(string slotName) =>
+            string.Equals(slotName, AccL, StringComparison.Ordinal) ||
+            string.Equals(slotName, AccR, StringComparison.Ordinal);
+
         internal static string InstanceId(InventoryItemData item)
         {
             try { return item != null ? item.GetInstanceId() : null; } catch { return null; }
+        }
+
+        /// <summary>
+        /// 這件裝備是不是「唯一」（`EquipConfig.Unique`）。查不到設定就當一般件——
+        /// 規劃時猜錯欄位頂多多跑一輪補裝，補裝重試會收斂。
+        /// </summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static bool IsUnique(string equipId)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(equipId)) return false;
+                var cfg = App.ServerRuntime?.GetEquip(equipId);
+                return cfg != null && cfg.Unique;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>該裝備欄上物品的設定 id（給人看的），空欄＝null。</summary>
+        internal static string EquippedId(CharacterData data, string slotName)
+        {
+            try
+            {
+                var list = data.Equips;
+                if (list == null) return null;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    var es = list[i];
+                    if (es == null || es.Equip == null) continue;
+                    if (string.Equals(es.Slot.ToString(), slotName, StringComparison.Ordinal))
+                        return es.Equip.Id;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>
+        /// 這件物品現在在哪：背包／身上某欄／魔導書／找不到。監控用——
+        /// `ApplyEquip_S` 伺服器端只從**背包**撈物品，已經穿在身上的送過去會被靜默忽略（＝逾時）。
+        /// </summary>
+        internal static string Locate(CharacterData data, string uid)
+        {
+            try
+            {
+                var inv = data.Inventory?.Equips;
+                if (inv != null)
+                    foreach (var kv in inv)
+                        if (kv.Value != null && string.Equals(InstanceId(kv.Value), uid, StringComparison.Ordinal))
+                            return "背包";
+
+                var eq = data.Equips;
+                if (eq != null)
+                    for (int i = 0; i < eq.Count; i++)
+                        if (eq[i] != null && eq[i].Equip != null &&
+                            string.Equals(InstanceId(eq[i].Equip), uid, StringComparison.Ordinal))
+                            return "身上" + eq[i].Slot;
+
+                var gr = data.Grimoires;
+                if (gr != null)
+                    for (int i = 0; i < gr.Count; i++)
+                        if (string.Equals(InstanceId(gr[i]), uid, StringComparison.Ordinal)) return "魔導書欄";
+            }
+            catch { }
+            return "找不到";
+        }
+
+        /// <summary>兩個飾品欄的現況，一行給 log 看：`L=Glove_Int(唯一) R=SafetyGloves`。</summary>
+        internal static string AccState(CharacterData data)
+        {
+            string l = EquippedId(data, AccL);
+            string r = EquippedId(data, AccR);
+            string Tag(string id) => id == null ? "空" : id + (IsUnique(id) ? "(唯一)" : "");
+            return $"L={Tag(l)} R={Tag(r)}";
         }
 
         /// <summary>目前該裝備欄上的物品實例 id（空欄＝null）。</summary>
@@ -938,12 +1181,319 @@ namespace SpiritValeSkillBuilds
     }
 
     // =========================================================================
-    //  還原狀態機：套用點法 → 配能力點 → 穿裝備 → 逐格綁快捷列（謂詞輪詢推進，每步有逾時）
+    //  時裝／外觀：衣櫃「套用」與「外觀」頁籤走的同一條路
+    // =========================================================================
+
+    internal enum LookKind { Cosmetic, RemoveCosmetic, Appearance }
+
+    internal class LookAction
+    {
+        public LookKind Kind;
+        public string Slot;     // CosmeticSlot 名稱
+        public string Id;
+        public override string ToString() =>
+            Kind switch
+            {
+                LookKind.Cosmetic => $"時裝{Slot}={Id}",
+                LookKind.RemoveCosmetic => $"卸時裝{Slot}",
+                LookKind.Appearance => "外觀",
+                _ => Kind.ToString(),
+            };
+    }
+
+    /// <summary>
+    /// 遊戲事實（ISIL 逐條讀過，2026-08-16）：
+    ///   ・時裝：`PlayerSave.ApplyCosmetic(id, slot)` → `ApplyCosmetic_S` → 伺服器只驗「衣櫃裡有這件」
+    ///     （WardrobeData.Get），無戰鬥閘門、無費用；`RemoveCosmetic(slot)` 同。這正是衣櫃 UI「套用」按的路。
+    ///     坐騎（Mount）、寵物（Pet）、稱號、特效…都只是 CosmeticSlot 的一格，一視同仁。
+    ///     武器外觀（Mainhand/Offhand）衣櫃 UI 會先檢查跟手上武器類型相容（CosmeticItem.WeaponType），
+    ///     伺服器不驗但畫面不會顯示不相容的皮——我們照 UI 的規矩先擋。
+    ///   ・外觀：`PlayerSave.ApplyAppearance(CharacterAppearanceDto, cb)` → 伺服器直接存，
+    ///     **免費、無次數、無 NPC 檢查**。入口有兩個：衣櫃頁籤（隨處可開）與造型師 NPC。
+    ///     DTO 用遊戲自己的工廠 `CharacterAppearanceDto.Create(CharacterAppearanceData, name, archetype)` 造，
+    ///     不自己拼 struct（含 string 欄位的 il2cpp struct 是紅線）。name/archetype 伺服器端不用，只是照樣填。
+    /// </summary>
+    internal static class Look
+    {
+        internal static readonly string[] AppearanceKeys =
+            { "BodyColor", "Hair", "HairColor", "Brow", "Beard", "Mouth", "Eye", "EyeColor", "Ears", "Iris" };
+
+        internal static void Snapshot(CharacterData data, Preset preset)
+        {
+            try
+            {
+                var list = new List<PresetCosmetic>();
+                foreach (var kv in CurrentCosmetics(data))
+                    list.Add(new PresetCosmetic { Slot = kv.Key, Id = kv.Value });
+                preset.Cosmetics = list;
+            }
+            catch (Exception ex)
+            {
+                preset.Cosmetics = null;
+                Plugin.Logger.LogWarning($"[Build] 記錄時裝失敗（其餘仍會存）：{ex.Message}");
+            }
+
+            try { preset.Appearance = ReadAppearance(data); }
+            catch (Exception ex)
+            {
+                preset.Appearance = null;
+                Plugin.Logger.LogWarning($"[Build] 記錄外觀失敗（其餘仍會存）：{ex.Message}");
+            }
+
+            if (Plugin.CfgDiagnostic.Value)
+                Plugin.Logger.LogInfo("[Build][診斷] 時裝快照：" +
+                    string.Join("、", (preset.Cosmetics ?? new List<PresetCosmetic>()).Select(c => $"{c.Slot}={c.Id}")) +
+                    "；外觀：" + (preset.Appearance == null ? "（無）" :
+                        string.Join(" ", preset.Appearance.Select(kv => $"{kv.Key}{kv.Value}"))));
+        }
+
+        /// <summary>身上目前套用的時裝：CosmeticSlot 名稱 → id。</summary>
+        internal static Dictionary<string, string> CurrentCosmetics(CharacterData data)
+        {
+            var res = new Dictionary<string, string>(StringComparer.Ordinal);
+            try
+            {
+                var list = data.Cosmetics;
+                if (list == null) return res;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    var c = list[i];
+                    if (c == null || string.IsNullOrEmpty(c.Id)) continue;
+                    res[c.Slot.ToString()] = c.Id;
+                }
+            }
+            catch { }
+            return res;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static Dictionary<string, int> ReadAppearance(CharacterData data)
+        {
+            var a = data.Appearance;
+            if (a == null) return null;
+            return new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                ["BodyColor"] = a.BodyColor, ["Hair"] = a.Hair, ["HairColor"] = a.HairColor,
+                ["Brow"] = a.Brow, ["Beard"] = a.Beard, ["Mouth"] = a.Mouth, ["Eye"] = a.Eye,
+                ["EyeColor"] = a.EyeColor, ["Ears"] = a.Ears, ["Iris"] = a.Iris,
+            };
+        }
+
+        internal static bool AppearanceMatches(Dictionary<string, int> want, CharacterData data)
+        {
+            Dictionary<string, int> cur;
+            try { cur = ReadAppearance(data); } catch { return false; }
+            if (want == null || cur == null) return false;
+            foreach (var kv in want)
+                if (!cur.TryGetValue(kv.Key, out int v) || v != kv.Value) return false;
+            return true;
+        }
+
+        internal static string DescribeAppearance(Dictionary<string, int> a) =>
+            a == null ? "（無）" : string.Join(" ", AppearanceKeys.Where(a.ContainsKey).Select(k => $"{k}{a[k]}"));
+
+        /// <summary>衣櫃裡有沒有這件（伺服器端 ApplyCosmetic_S 的唯一檢查，先擋免得白送）。</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static bool InWardrobe(PlayerSave save, string id)
+        {
+            try
+            {
+                var w = save.PlayerData?.Wardrobe;
+                if (w == null) return true;      // 拿不到就放行，讓伺服器當權威
+                return w.Get(id) != null;
+            }
+            catch { return true; }
+        }
+
+        /// <summary>時裝設定是否還存在（改版可能移除）。</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static bool CosmeticExists(string id)
+        {
+            try
+            {
+                var rt = App.ServerRuntime;
+                if (rt == null) return true;
+                return rt.GetCosmetic(id) != null;
+            }
+            catch { return true; }
+        }
+
+        /// <summary>
+        /// 武器外觀跟手上武器類型相不相容（照衣櫃 UI `IsWeaponSkinCompatible` 的規矩）：
+        /// 皮的 WeaponType==Invalid ＝ 通用；否則要等於該手武器的 EquipType；那手沒武器就當不相容。
+        /// 非武器欄一律相容。
+        /// </summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static bool WeaponSkinCompatible(CharacterData data, string slotName, string id)
+        {
+            try
+            {
+                string equipSlot = slotName == "Mainhand" ? "Mainhand" : slotName == "Offhand" ? "Offhand" : null;
+                if (equipSlot == null) return true;
+                var item = App.ServerRuntime?.GetCosmetic(id);
+                if (item == null) return true;
+                var need = item.WeaponType;
+                if (need == EquipType.Invalid) return true;
+
+                var equips = data.Equips;
+                if (equips == null) return false;
+                for (int i = 0; i < equips.Count; i++)
+                {
+                    var es = equips[i];
+                    if (es == null || es.Equip == null) continue;
+                    if (es.Slot.ToString() != equipSlot) continue;
+                    var cfg = App.ServerRuntime?.GetEquip(es.Equip.Id);
+                    return cfg != null && cfg.Type == need;
+                }
+                return false;
+            }
+            catch { return true; }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static void SendCosmetic(PlayerSave save, string slotName, string id)
+        {
+            var slot = (CosmeticSlot)Enum.Parse(typeof(CosmeticSlot), slotName);
+            save.ApplyCosmetic(id, slot);   // 已在該格時回 false 不送——外層驗收會直接判到位
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static void SendRemoveCosmetic(PlayerSave save, string slotName)
+        {
+            save.RemoveCosmetic((CosmeticSlot)Enum.Parse(typeof(CosmeticSlot), slotName));
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static void SendAppearance(PlayerSave save, Dictionary<string, int> want)
+        {
+            var data = save.Data;
+            // 從現況複製一份再覆蓋快照有的欄位（快照缺欄位時不要把它歸零）
+            var cur = data.Appearance;
+            var a = new CharacterAppearanceData();
+            int Pick(string k, int fallback) => want.TryGetValue(k, out int v) ? v : fallback;
+            a.BodyColor = Pick("BodyColor", cur?.BodyColor ?? 0);
+            a.Hair = Pick("Hair", cur?.Hair ?? 0);
+            a.HairColor = Pick("HairColor", cur?.HairColor ?? 0);
+            a.Brow = Pick("Brow", cur?.Brow ?? 0);
+            a.Beard = Pick("Beard", cur?.Beard ?? 0);
+            a.Mouth = Pick("Mouth", cur?.Mouth ?? 0);
+            a.Eye = Pick("Eye", cur?.Eye ?? 0);
+            a.EyeColor = Pick("EyeColor", cur?.EyeColor ?? 0);
+            a.Ears = Pick("Ears", cur?.Ears ?? 0);
+            a.Iris = Pick("Iris", cur?.Iris ?? 0);
+
+            var arche = Archetype.Novice;
+            try
+            {
+                var list = data.Archetypes;
+                if (list != null && list.Count > 0) arche = list[0];
+            }
+            catch { }
+
+            var dto = CharacterAppearanceDto.Create(a, data.Name, arche);
+            save.ApplyAppearance(dto, null);
+        }
+    }
+
+    // =========================================================================
+    //  診斷：狀態元件快照（魔導書「替換」機制追查用）
+    // =========================================================================
+
+    /// <summary>
+    /// 把本地玩家 StatusComponent 裡跟「替換／調諧」有關的東西印成一行：
+    ///   SkillReplacements（技能替換表）、StatusReplacements（狀態替換表）、Attunements（調諧歷史）、
+    ///   Buffs、畫面上的技能／狀態顯示（SkillDisplays_C / StatusDisplays_C）、武器元素、主手、魔導書。
+    /// 遊戲事實（ISIL）：`StatusComponent.SetGear` 一開始就 `SkillReplacements.Clear()`＋`ClearStatusReplacements()`
+    /// （後者把替換表裡「原始＋替換」兩邊的狀態都 RemoveEffect），再從裝備／神器／魔導書的 AddStat 重新登錄；
+    /// 任何狀態在 `ApplyEffectImmediate` 套用時才查 StatusReplacements 換名。所以「Wind Attunement 沒被換成
+    /// Elemental Attunement」＝那個狀態被套用的當下替換表裡沒有它。這個 dump 就是要抓那一刻前後的差異。
+    /// Ctrl+Shift+D 隨時可手動印一次；還原流程的關鍵節點自動印。
+    /// </summary>
+    internal static class Diag
+    {
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal static void Dump(string tag)
+        {
+            try
+            {
+                var player = App.Player;
+                var status = player?.Status;
+                var data = player?.Save?.Data;
+                if (status == null) { Plugin.Logger.LogInfo($"[Build][診斷:{tag}] 拿不到 StatusComponent"); return; }
+
+                string Dict(Il2CppSystem.Collections.Generic.Dictionary<string, string> d)
+                {
+                    try
+                    {
+                        if (d == null) return "null";
+                        var parts = new List<string>();
+                        foreach (var kv in d) parts.Add($"{kv.Key}→{kv.Value}");
+                        return parts.Count == 0 ? "{}" : "{" + string.Join(", ", parts) + "}";
+                    }
+                    catch (Exception ex) { return "(讀取失敗:" + ex.GetType().Name + ")"; }
+                }
+                string Keys(Il2CppSystem.Collections.Generic.Dictionary<string, StatusEffectState> d)
+                {
+                    try
+                    {
+                        if (d == null) return "null";
+                        var parts = new List<string>();
+                        foreach (var kv in d) parts.Add(kv.Key);
+                        return parts.Count == 0 ? "{}" : "{" + string.Join(", ", parts) + "}";
+                    }
+                    catch (Exception ex) { return "(讀取失敗:" + ex.GetType().Name + ")"; }
+                }
+                string StrList(Il2CppSystem.Collections.Generic.List<string> l)
+                {
+                    try
+                    {
+                        if (l == null) return "null";
+                        var parts = new List<string>();
+                        for (int i = 0; i < l.Count; i++) parts.Add(l[i]);
+                        return "[" + string.Join(", ", parts) + "]";
+                    }
+                    catch (Exception ex) { return "(讀取失敗:" + ex.GetType().Name + ")"; }
+                }
+                string weaponEl = "?";
+                try { weaponEl = status.WeaponElement != null ? status.WeaponElement.Value.ToString() : "null"; } catch { }
+                string mainhand = data != null ? (Gear.EquippedId(data, "Mainhand") ?? "空") : "?";
+                string grims = "?";
+                try
+                {
+                    var g = data?.Grimoires;
+                    grims = g == null ? "null" : "[" + string.Join(", ", Enumerable.Range(0, g.Count).Select(i => g[i]?.Id)) + "]";
+                }
+                catch { }
+                string granted = "?";
+                try
+                {
+                    var gs = status.GrantedSkills;
+                    granted = gs == null ? "null" : "[" + string.Join(", ", Enumerable.Range(0, gs.Count).Select(i => $"{gs[i]?.Id}:{gs[i]?.Level}")) + "]";
+                }
+                catch { }
+
+                Plugin.Logger.LogInfo($"[Build][診斷:{tag}] 主手={mainhand} 武器元素={weaponEl} 魔導書={grims}" +
+                    $"｜技能替換={Dict(status.SkillReplacements)}" +
+                    $"｜狀態替換={Dict(status.StatusReplacements)}" +
+                    $"｜調諧={StrList(status.Attunements)}" +
+                    $"｜技能顯示={Keys(status.SkillDisplays_C)}" +
+                    $"｜狀態顯示={Keys(status.StatusDisplays_C)}" +
+                    $"｜賦予技能={granted}");
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger.LogWarning($"[Build][診斷:{tag}] dump 失敗：{ex.Message}");
+            }
+        }
+    }
+
+    // =========================================================================
+    //  還原狀態機：套用點法 → 配能力點 → 穿裝備 → 時裝／外觀 → 逐格綁快捷列（謂詞輪詢推進，每步有逾時）
     // =========================================================================
 
     internal static class Machine
     {
-        private enum Step { Idle, WaitApply, AttrApply, Gear, Assign }
+        private enum Step { Idle, WaitApply, AttrApply, Gear, Look, Assign }
 
         /// <summary>本次還原被跳過的能力點步驟原因（null＝沒跳過）；完成時一併回報。</summary>
         private static string _skippedAttr;
@@ -970,6 +1520,13 @@ namespace SpiritValeSkillBuilds
         /// </summary>
         private static int _gearPlanned;
         private static readonly List<string> _gearMissing = new List<string>();
+        private static bool _remounted;             // 「換裝後重掛魔導書」這次還原跑過了沒
+
+        private static List<LookAction> _look;      // 時裝／外觀佇列
+        private static int _lookIdx;
+        private static bool _lookSent;
+        private static int _lookPlanned;
+        private static readonly List<string> _lookMissing = new List<string>();
 
         private const float StepTimeout = 10f;      // 套用點法／能力點單步逾時
         private const float AssignTimeout = 1.0f;   // 單格綁定驗收逾時（過了就下一格）
@@ -979,6 +1536,8 @@ namespace SpiritValeSkillBuilds
         private const float GearTimeout = 2.0f;     // 單件換裝驗收逾時（伺服器要寫檔，給寬一點）
         private const float GearGap = 0.2f;         // 兩件換裝之間的間隔
         private const int MaxGearRetry = 2;         // 補裝輪數上限
+        private const float LookTimeout = 2.0f;     // 單件時裝／外觀驗收逾時
+        private const float LookGap = 0.2f;
 
         internal static bool Busy => _step != Step.Idle;
 
@@ -991,8 +1550,24 @@ namespace SpiritValeSkillBuilds
             if (_use.Equips && (_target.Equips?.Count ?? 0) > 0) parts.Add($"{_target.Equips.Count} 裝備");
             if (_use.Artifacts && (_target.Artifacts?.Count ?? 0) > 0) parts.Add($"{_target.Artifacts.Count} 神器");
             if (_use.Grimoires && (_target.Grimoires?.Count ?? 0) > 0) parts.Add($"{_target.Grimoires.Count} 魔導書");
+            if (_use.Cosmetics && _target.Cosmetics != null) parts.Add($"{_target.Cosmetics.Count} 時裝");
+            if (_use.Appearance && (_target.Appearance?.Count ?? 0) > 0) parts.Add("外觀");
             if (_use.Hotbar && _slots.Count > 0) parts.Add($"{_slots.Count} 快捷格");
             return parts.Count == 0 ? "（沒有勾選任何項目）" : string.Join("／", parts);
+        }
+
+        /// <summary>
+        /// 勾了時裝／外觀但這組根本沒記過（升級前存的舊快照）——要明講，不然玩家會以為功能壞了：
+        /// 「打勾只是開關，資料要那一組自己存過一次才有」是最常見的誤會（2026-08-16 實測第一個回報就是這個）。
+        /// </summary>
+        private static string MissingLookNote()
+        {
+            if (_target == null) return null;
+            var m = new List<string>();
+            if (_use.Cosmetics && _target.Cosmetics == null) m.Add("時裝");
+            if (_use.Appearance && (_target.Appearance?.Count ?? 0) == 0) m.Add("外觀");
+            if (m.Count == 0) return null;
+            return $"這組沒有{string.Join("／", m)}資料（升級前存的）——右鍵這組 →「把目前的時裝／外觀存進這組」補上";
         }
 
         internal static void Begin(PlayerSave save, Preset preset)
@@ -1017,6 +1592,10 @@ namespace SpiritValeSkillBuilds
             _gear = null;
             _gearPlanned = 0;
             _gearMissing.Clear();
+            _remounted = false;
+            _look = null;
+            _lookPlanned = 0;
+            _lookMissing.Clear();
 
             // 戰鬥中伺服器會拒絕換裝（CheckCanChangeGear），先擋下免得換到一半失敗
             if (HasGearData(preset) && Gear.InCombat())
@@ -1050,7 +1629,9 @@ namespace SpiritValeSkillBuilds
                 }
             }
 
-            Plugin.Logger.LogInfo($"[Build] 開始還原「{_target.Name}」：{Describe()}");
+            Plugin.Logger.LogInfo($"[Build] 開始還原「{_target.Name}」：{Describe()}" +
+                (MissingLookNote() is string mln ? $"；{mln}" : ""));
+            Diag.Dump("還原開始前");
 
             if (!doSkills)
             {
@@ -1087,6 +1668,7 @@ namespace SpiritValeSkillBuilds
                     if (ApplyMatches(save))
                     {
                         if (Plugin.CfgDiagnostic.Value) Plugin.Logger.LogInfo("[Build][診斷] 加點驗收通過。");
+                        Diag.Dump("技能點套用後");
                         BeginAttributes(save);
                     }
                     else if (now > _deadline)
@@ -1112,6 +1694,10 @@ namespace SpiritValeSkillBuilds
 
                 case Step.Gear:
                     TickGear(save, now);
+                    break;
+
+                case Step.Look:
+                    TickLook(save, now);
                     break;
 
                 case Step.Assign:
@@ -1215,21 +1801,21 @@ namespace SpiritValeSkillBuilds
 
         private static void BeginGear(PlayerSave save)
         {
+            _gearMissing.Clear();          // 要在規劃**之前**清：規劃階段也會記缺件備註
             _gear = HasGearData(_target) ? BuildGearQueue(save) : new List<GearAction>();
-            _gearMissing.Clear();
             _gearIdx = 0;
             _gearSent = false;
             _gearRound = 0;
             _gearPlanned = _gear.Count;   // 只在這裡設，補裝輪不覆寫
             _nextAssignAt = Time.unscaledTime;   // 別沿用上一輪的節流時間
 
-            if (_gear.Count == 0) { BeginAssign(); return; }
+            if (_gear.Count == 0) { BeginLook(save); return; }
 
             _step = Step.Gear;
             _deadline = Time.unscaledTime + StepTimeout;
             UiRow.SetStatus($"還原「{_target.Name}」：換裝中…（{_gear.Count} 件）");
-            if (Plugin.CfgDiagnostic.Value)
-                Plugin.Logger.LogInfo("[Build][診斷] 換裝佇列：" + string.Join("、", _gear.Select(g => g.ToString())));
+            // 一行／次還原，常駐印出——回報「換裝失敗」時第一個要看的就是這行
+            Plugin.Logger.LogInfo("[Build] 換裝佇列：" + string.Join("、", _gear.Select(g => g.ToString())));
         }
 
         /// <summary>
@@ -1258,6 +1844,7 @@ namespace SpiritValeSkillBuilds
                 bool clear = _use.ClearUnlisted;
 
                 // --- 裝備 ---（沒勾就整類不動，連「卸下多餘的」都不做）
+                // 飾品左右欄另外規劃（PlanAccessories），這裡只處理「一種類型一個欄位」的部位。
                 var wantEquip = new Dictionary<string, PresetGear>(StringComparer.Ordinal);
                 if (_use.Equips)
                     foreach (var g in _target.Equips ?? new List<PresetGear>())
@@ -1265,6 +1852,7 @@ namespace SpiritValeSkillBuilds
 
                 foreach (var kv in wantEquip)
                 {
+                    if (Gear.IsAccessorySlot(kv.Key)) continue;
                     string cur = Gear.EquippedUid(data, kv.Key);
                     if (string.Equals(cur, kv.Value.Uid, StringComparison.Ordinal)) continue;
                     q.Add(new GearAction { Kind = GearKind.Equip, Slot = kv.Key, Uid = kv.Value.Uid, Id = kv.Value.Id });
@@ -1279,10 +1867,13 @@ namespace SpiritValeSkillBuilds
                             var es = list[i];
                             if (es == null || es.Equip == null) continue;
                             string slot = es.Slot.ToString();
+                            if (Gear.IsAccessorySlot(slot)) continue;
                             if (wantEquip.ContainsKey(slot)) continue;
                             q.Add(new GearAction { Kind = GearKind.Unequip, Slot = slot, Id = es.Equip.Id });
                         }
                 }
+
+                var accessory = _use.Equips ? PlanAccessories(data, wantEquip, clear) : new List<GearAction>();
 
                 // --- 神器 ---
                 var wantArt = new Dictionary<string, PresetGear>(StringComparer.Ordinal);
@@ -1336,6 +1927,10 @@ namespace SpiritValeSkillBuilds
                 // 先卸後穿：欄位／魔導書上限先讓出來，避免「位置已滿」被拒
                 q = q.OrderBy(a => a.Kind == GearKind.Unequip || a.Kind == GearKind.RemoveArtifact ||
                                    a.Kind == GearKind.RemoveGrimoire ? 0 : 1).ToList();
+
+                // 飾品動作**保持規劃出來的順序**接在最後——它的卸／穿交錯是刻意的
+                //（先讓欄位再穿），不能被上面的排序打散。飾品欄與其他部位互不影響。
+                q.AddRange(accessory);
             }
             catch (Exception ex)
             {
@@ -1345,16 +1940,147 @@ namespace SpiritValeSkillBuilds
             return q;
         }
 
+        /// <summary>
+        /// 飾品左右欄的換裝規劃。**依遊戲 `PlayerSave.ApplyEquip` 的欄位規則模擬**，一輪就到位：
+        ///
+        ///   遊戲收到 ApplyEquip(飾品) 時自己挑欄位——
+        ///     ・唯一（EquipConfig.Unique）：**一律塞左欄**，左欄原本的擠回背包
+        ///     ・一般：左空→左；左滿右空→右；**兩欄都滿→換左欄**（右欄永遠不會被直接換掉）
+        ///   而且 ApplyEquip_S 只從**背包**撈物品：已在身上的送過去會被靜默忽略。
+        ///
+        /// 所以「兩欄都滿時要換右邊那件」非先卸右欄不可，否則遊戲會把左欄（常常是唯一手套）擠掉，
+        /// 舊版補裝重試也救不回來——每輪都在左欄來回擠。這就是「換手套失敗」的根因。
+        ///
+        /// 規劃原則：飾品以**集合**看待（要的兩件都在身上就算到位，不計較左右——
+        /// 唯一件反正只能在左）；動作順序＝卸不要的 → 唯一件先穿 → 一般件補進空欄，
+        /// 兩欄都滿就先讓出不要的那欄。動作的 Slot 欄位是預測值，驗收看集合。
+        /// </summary>
+        private static List<GearAction> PlanAccessories(CharacterData data,
+            Dictionary<string, PresetGear> wantEquip, bool clear)
+        {
+            var acts = new List<GearAction>();
+
+            var want = new List<PresetGear>();
+            if (wantEquip.TryGetValue(Gear.AccL, out var wl) && !string.IsNullOrEmpty(wl.Uid)) want.Add(wl);
+            if (wantEquip.TryGetValue(Gear.AccR, out var wr) && !string.IsNullOrEmpty(wr.Uid) &&
+                !want.Any(w => string.Equals(w.Uid, wr.Uid, StringComparison.Ordinal))) want.Add(wr);
+            var wantUids = new HashSet<string>(want.Select(w => w.Uid), StringComparer.Ordinal);
+
+            // 模擬狀態（uid；null＝空欄）
+            string simL = Gear.EquippedUid(data, Gear.AccL);
+            string simR = Gear.EquippedUid(data, Gear.AccR);
+            bool Wanted(string uid) => uid != null && wantUids.Contains(uid);
+            bool OnBody(string uid) => uid != null &&
+                (string.Equals(uid, simL, StringComparison.Ordinal) || string.Equals(uid, simR, StringComparison.Ordinal));
+
+            // A. 卸下快照沒有的（勾了才做）
+            if (clear)
+            {
+                if (simL != null && !Wanted(simL))
+                {
+                    acts.Add(new GearAction { Kind = GearKind.Unequip, Slot = Gear.AccL, Id = Gear.EquippedId(data, Gear.AccL) });
+                    simL = null;
+                }
+                if (simR != null && !Wanted(simR))
+                {
+                    acts.Add(new GearAction { Kind = GearKind.Unequip, Slot = Gear.AccR, Id = Gear.EquippedId(data, Gear.AccR) });
+                    simR = null;
+                }
+            }
+
+            var uniques = want.Where(w => Gear.IsUnique(w.Id)).ToList();
+            var normals = want.Where(w => !Gear.IsUnique(w.Id)).ToList();
+
+            // B. 唯一件先穿：遊戲一律放左欄、左欄原本的擠回背包（若那件也是要的，C 步會補回右欄）
+            bool uniquePlaced = uniques.Any(u => OnBody(u.Uid));
+            foreach (var u in uniques)
+            {
+                if (OnBody(u.Uid)) continue;
+                if (uniquePlaced)
+                {
+                    // 兩件唯一飾品同時上身走 ApplyEquip 是做不到的（都只進左欄、互相擠掉）
+                    _gearMissing.Add($"{u.Id}(唯一飾品只能佔左欄，已被另一件唯一飾品佔用)");
+                    continue;
+                }
+                acts.Add(new GearAction { Kind = GearKind.Equip, Slot = Gear.AccL, Uid = u.Uid, Id = u.Id });
+                simL = u.Uid;
+                uniquePlaced = true;
+            }
+
+            // C. 一般件：左空→左、左滿右空→右；兩欄都滿→先讓出「不要的那欄」再穿
+            //   （讓左則進左、讓右則進右——正好落在讓出來的那格）
+            foreach (var n in normals)
+            {
+                if (OnBody(n.Uid)) continue;
+                if (simL == null)
+                {
+                    acts.Add(new GearAction { Kind = GearKind.Equip, Slot = Gear.AccL, Uid = n.Uid, Id = n.Id });
+                    simL = n.Uid;
+                    continue;
+                }
+                if (simR == null)
+                {
+                    acts.Add(new GearAction { Kind = GearKind.Equip, Slot = Gear.AccR, Uid = n.Uid, Id = n.Id });
+                    simR = n.Uid;
+                    continue;
+                }
+                // 兩欄都滿：都不要就讓左欄（跟遊戲預設一致）
+                string free = !Wanted(simR) ? Gear.AccR : (!Wanted(simL) ? Gear.AccL : null);
+                if (free == null)
+                {
+                    _gearMissing.Add($"{n.Id}(飾品欄已滿)");   // 要的超過兩件？理論上不會發生
+                    continue;
+                }
+                acts.Add(new GearAction { Kind = GearKind.Unequip, Slot = free, Id = Gear.EquippedId(data, free) });
+                acts.Add(new GearAction { Kind = GearKind.Equip, Slot = free, Uid = n.Uid, Id = n.Id });
+                if (free == Gear.AccL) simL = n.Uid; else simR = n.Uid;
+            }
+
+            if (acts.Count > 0 || want.Count > 0)
+            {
+                Plugin.Logger.LogInfo("[Build] 飾品規劃：現況 " + Gear.AccState(data) +
+                    " → 目標 {" + string.Join("、", want.Select(w => w.Id + (Gear.IsUnique(w.Id) ? "(唯一)" : ""))) + "}" +
+                    (acts.Count == 0 ? " → 已到位" : " → 動作 " + string.Join("→", acts.Select(a => a.ToString()))));
+            }
+            return acts;
+        }
+
+        /// <summary>身上每本魔導書 → 卸下、裝回 兩個動作（跟玩家手動拔掉重裝一模一樣）。</summary>
+        private static List<GearAction> BuildRemountQueue(PlayerSave save)
+        {
+            var q = new List<GearAction>();
+            try
+            {
+                var g = save.Data.Grimoires;
+                if (g == null) return q;
+                for (int i = 0; i < g.Count; i++)
+                {
+                    string uid = Gear.InstanceId(g[i]);
+                    if (string.IsNullOrEmpty(uid)) continue;
+                    q.Add(new GearAction { Kind = GearKind.RemoveGrimoire, Uid = uid, Id = g[i].Id });
+                    q.Add(new GearAction { Kind = GearKind.Grimoire, Uid = uid, Id = g[i].Id });
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger.LogWarning($"[Build] 產生重掛魔導書清單失敗：{ex.Message}");
+                q.Clear();
+            }
+            return q;
+        }
+
         private static void TickGear(PlayerSave save, float now)
         {
             if (_gearIdx >= _gear.Count)
             {
                 // 補裝：重新比對現況，沒到位的再送一輪。
-                // 主因是**飾品左右欄由遊戲決定**——ApplyEquip 只收物品不收欄位，
-                // 它用 GetOccupiedSlot 挑空的那格。第一輪兩格都空時可能放錯邊，
-                // 後面那件再把它擠掉；第二輪時另一格已被正確佔住，剩下的只能進對的欄位。
+                // 飾品欄位規則已在 PlanAccessories 依遊戲邏輯模擬，正常一輪到位；
+                // 這裡的重試留給伺服器偶發沒回應、或規劃猜錯（例如唯一設定查不到）的收斂。
                 if (_gearRound < MaxGearRetry)
                 {
+                    // 重新規劃前先清缺件清單：規劃階段本身會記備註；重新比對後全到位＝上一輪的
+                    // 「逾時」其實後來有落地，不該還掛在報告上
+                    _gearMissing.Clear();
                     var again = BuildGearQueue(save);
                     if (again.Count > 0)
                     {
@@ -1362,18 +2088,38 @@ namespace SpiritValeSkillBuilds
                         _gear = again;
                         _gearIdx = 0;
                         _gearSent = false;
-                        _gearMissing.Clear();
                         _nextAssignAt = now + RetryGap;
                         Plugin.Logger.LogInfo($"[Build] 第 {_gearRound} 次補裝：{again.Count} 件未到位（" +
-                            string.Join("、", again.Take(4).Select(a => a.ToString())) + "）");
+                            string.Join("、", again.Take(4).Select(a => a.ToString())) + "）；飾品現況 " +
+                            Gear.AccState(save.Data));
                         UiRow.SetStatus($"補裝 {again.Count} 件…");
                         return;
                     }
                 }
 
                 if (_gearMissing.Count > 0)
-                    Plugin.Logger.LogWarning($"[Build] {_gearMissing.Count} 件裝備沒還原：{string.Join("、", _gearMissing)}");
-                BeginAssign();
+                    Plugin.Logger.LogWarning($"[Build] {_gearMissing.Count} 件裝備沒還原：{string.Join("、", _gearMissing)}" +
+                        $"；飾品現況 {Gear.AccState(save.Data)}");
+                Diag.Dump("換裝階段結束");
+
+                // 實驗：把魔導書逐本卸下再裝回（＝玩家手動拔掉重裝），只跑一次
+                if (Plugin.CfgRemountGrimoires.Value && !_remounted)
+                {
+                    _remounted = true;
+                    var remount = BuildRemountQueue(save);
+                    if (remount.Count > 0)
+                    {
+                        _gear = remount;
+                        _gearIdx = 0;
+                        _gearSent = false;
+                        _gearRound = MaxGearRetry;      // 這輪跑完不要再補裝重試
+                        _nextAssignAt = now + GearGap;
+                        Plugin.Logger.LogInfo("[Build] 重掛魔導書：" + string.Join("、", remount.Select(a => a.ToString())));
+                        UiRow.SetStatus($"重掛魔導書 {remount.Count / 2} 本…");
+                        return;
+                    }
+                }
+                BeginLook(save);
                 return;
             }
 
@@ -1382,6 +2128,17 @@ namespace SpiritValeSkillBuilds
             if (!_gearSent)
             {
                 if (now < _nextAssignAt) return;
+
+                // 送出前先驗：前一件的連鎖效應（例如唯一飾品把左欄擠回背包、或已在身上）
+                // 可能讓這件已經到位——不送就不會有「已在身上→伺服器忽略→逾時」的假失敗，也少一次 RPC
+                if (GearMatches(save, act))
+                {
+                    if (Plugin.CfgDiagnostic.Value)
+                        Plugin.Logger.LogInfo($"[Build][診斷] 換裝已到位，略過：{act}");
+                    NextGear(now);
+                    return;
+                }
+
                 bool sent = SendGear(save, act);
                 if (!sent) { NextGear(now); return; }   // 缺件／不能穿：已記錄，直接下一件
                 _gearSent = true;
@@ -1392,13 +2149,19 @@ namespace SpiritValeSkillBuilds
 
             if (GearMatches(save, act))
             {
+                if (Plugin.CfgDiagnostic.Value)
+                {
+                    Plugin.Logger.LogInfo($"[Build][診斷] 換裝到位：{act}；飾品現況 {Gear.AccState(save.Data)}");
+                    Diag.Dump($"換裝到位 {act}");
+                }
                 NextGear(now);
             }
             else if (now > _deadline)
             {
                 _gearMissing.Add($"{act}(逾時)");
-                if (Plugin.CfgDiagnostic.Value)
-                    Plugin.Logger.LogInfo($"[Build][診斷] 換裝逾時：{act}");
+                // 常駐印：逾時是「伺服器沒接受／靜默忽略」的訊號，要連當下狀態一起留下來
+                string where = act.Uid != null ? $"；物品位置={Gear.Locate(save.Data, act.Uid)}" : "";
+                Plugin.Logger.LogWarning($"[Build] 換裝逾時：{act}{where}；飾品現況 {Gear.AccState(save.Data)}");
                 NextGear(now);
             }
         }
@@ -1418,6 +2181,11 @@ namespace SpiritValeSkillBuilds
                 switch (act.Kind)
                 {
                     case GearKind.Equip:
+                        // 飾品看集合：在左或右都算到位（欄位是遊戲挑的，唯一件永遠在左；
+                        // 硬要對左右只會逼出「已在身上→再送→被忽略→逾時」的假失敗）
+                        if (Gear.IsAccessorySlot(act.Slot))
+                            return string.Equals(Gear.EquippedUid(data, Gear.AccL), act.Uid, StringComparison.Ordinal) ||
+                                   string.Equals(Gear.EquippedUid(data, Gear.AccR), act.Uid, StringComparison.Ordinal);
                         return string.Equals(Gear.EquippedUid(data, act.Slot), act.Uid, StringComparison.Ordinal);
                     case GearKind.Unequip:
                         return Gear.EquippedUid(data, act.Slot) == null;
@@ -1432,6 +2200,173 @@ namespace SpiritValeSkillBuilds
                 }
             }
             catch { }
+            return false;
+        }
+
+        // ---- 時裝／外觀階段：換裝之後（武器外觀要對手上的武器）、綁快捷列之前 ----
+
+        private static void BeginLook(PlayerSave save)
+        {
+            _lookMissing.Clear();
+            _look = BuildLookQueue(save);
+            _lookIdx = 0;
+            _lookSent = false;
+            _lookPlanned = _look.Count;
+            _nextAssignAt = Time.unscaledTime;
+
+            if (_look.Count == 0) { BeginAssign(); return; }
+
+            _step = Step.Look;
+            _deadline = Time.unscaledTime + StepTimeout;
+            UiRow.SetStatus($"還原「{_target.Name}」：套用時裝／外觀…（{_look.Count} 項）");
+            Plugin.Logger.LogInfo("[Build] 時裝／外觀佇列：" + string.Join("、", _look.Select(a => a.ToString())));
+        }
+
+        /// <summary>
+        /// 只送「現況與快照不符」的格子。時裝欄之間互不影響（一格一件、伺服器 RemoveAll(slot) 再加），
+        /// 不需要像飾品那樣模擬順序。舊快照沒記過（null）整段跳過——跟裝備同一條紅線。
+        /// </summary>
+        private static List<LookAction> BuildLookQueue(PlayerSave save)
+        {
+            var q = new List<LookAction>();
+            try
+            {
+                var data = save.Data;
+
+                if (_use.Cosmetics && _target.Cosmetics != null)
+                {
+                    var want = new Dictionary<string, string>(StringComparer.Ordinal);
+                    foreach (var c in _target.Cosmetics)
+                        if (c != null && !string.IsNullOrEmpty(c.Slot) && !string.IsNullOrEmpty(c.Id)) want[c.Slot] = c.Id;
+                    var cur = Look.CurrentCosmetics(data);
+
+                    if (_use.ClearUnlisted)
+                        foreach (var kv in cur)
+                            if (!want.ContainsKey(kv.Key))
+                                q.Add(new LookAction { Kind = LookKind.RemoveCosmetic, Slot = kv.Key, Id = kv.Value });
+
+                    foreach (var kv in want)
+                    {
+                        if (cur.TryGetValue(kv.Key, out var have) && string.Equals(have, kv.Value, StringComparison.Ordinal)) continue;
+                        q.Add(new LookAction { Kind = LookKind.Cosmetic, Slot = kv.Key, Id = kv.Value });
+                    }
+                }
+
+                if (_use.Appearance && (_target.Appearance?.Count ?? 0) > 0 &&
+                    !Look.AppearanceMatches(_target.Appearance, data))
+                    q.Add(new LookAction { Kind = LookKind.Appearance });
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger.LogWarning($"[Build] 產生時裝／外觀清單失敗，跳過：{ex.Message}");
+                return new List<LookAction>();
+            }
+            return q;
+        }
+
+        private static void TickLook(PlayerSave save, float now)
+        {
+            if (_lookIdx >= _look.Count)
+            {
+                if (_lookMissing.Count > 0)
+                    Plugin.Logger.LogWarning($"[Build] {_lookMissing.Count} 項時裝／外觀沒還原：{string.Join("、", _lookMissing)}");
+                BeginAssign();
+                return;
+            }
+
+            var act = _look[_lookIdx];
+
+            if (!_lookSent)
+            {
+                if (now < _nextAssignAt) return;
+                if (LookMatches(save, act)) { NextLook(now); return; }
+                bool sent = SendLook(save, act);
+                if (!sent) { NextLook(now); return; }
+                _lookSent = true;
+                _deadline = now + LookTimeout;
+                UiRow.SetStatus($"還原「{_target.Name}」：時裝／外觀 {_lookIdx + 1}/{_look.Count}（{act}）…");
+                return;
+            }
+
+            if (LookMatches(save, act))
+            {
+                if (Plugin.CfgDiagnostic.Value) Plugin.Logger.LogInfo($"[Build][診斷] 時裝／外觀到位：{act}");
+                NextLook(now);
+            }
+            else if (now > _deadline)
+            {
+                _lookMissing.Add($"{act}(逾時)");
+                Plugin.Logger.LogWarning($"[Build] 時裝／外觀逾時：{act}" +
+                    (act.Kind == LookKind.Appearance
+                        ? $"；目標 {Look.DescribeAppearance(_target.Appearance)}；現況 {Look.DescribeAppearance(SafeReadAppearance(save))}"
+                        : ""));
+                NextLook(now);
+            }
+        }
+
+        private static void NextLook(float now)
+        {
+            _lookIdx++;
+            _lookSent = false;
+            _nextAssignAt = now + LookGap;
+        }
+
+        private static Dictionary<string, int> SafeReadAppearance(PlayerSave save)
+        {
+            try { return Look.ReadAppearance(save.Data); } catch { return null; }
+        }
+
+        private static bool LookMatches(PlayerSave save, LookAction act)
+        {
+            try
+            {
+                var data = save.Data;
+                switch (act.Kind)
+                {
+                    case LookKind.Cosmetic:
+                        return Look.CurrentCosmetics(data).TryGetValue(act.Slot, out var have) &&
+                               string.Equals(have, act.Id, StringComparison.Ordinal);
+                    case LookKind.RemoveCosmetic:
+                        return !Look.CurrentCosmetics(data).ContainsKey(act.Slot);
+                    case LookKind.Appearance:
+                        return Look.AppearanceMatches(_target.Appearance, data);
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        /// <summary>回傳 false＝送不出去（不在衣櫃／已不存在／武器外觀不相容），已記進 _lookMissing。</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool SendLook(PlayerSave save, LookAction act)
+        {
+            try
+            {
+                switch (act.Kind)
+                {
+                    case LookKind.Cosmetic:
+                        if (!Look.CosmeticExists(act.Id)) { _lookMissing.Add($"{act.Id}(已不存在)"); return false; }
+                        if (!Look.InWardrobe(save, act.Id)) { _lookMissing.Add($"{act.Id}(不在衣櫃)"); return false; }
+                        if (!Look.WeaponSkinCompatible(save.Data, act.Slot, act.Id))
+                        {
+                            _lookMissing.Add($"{act.Id}(武器類型不符)");
+                            return false;
+                        }
+                        Look.SendCosmetic(save, act.Slot, act.Id);
+                        return true;
+                    case LookKind.RemoveCosmetic:
+                        Look.SendRemoveCosmetic(save, act.Slot);
+                        return true;
+                    case LookKind.Appearance:
+                        Look.SendAppearance(save, _target.Appearance);
+                        return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Logger.LogWarning($"[Build] 時裝／外觀送出失敗（{act}）：{ex.Message}");
+                _lookMissing.Add($"{act}(錯誤)");
+            }
             return false;
         }
 
@@ -1479,27 +2414,38 @@ namespace SpiritValeSkillBuilds
 
             string gearNote = _gearMissing.Count > 0
                 ? $"　裝備未還原：{string.Join("、", _gearMissing)}" : "";
+            string lookNote = _lookMissing.Count > 0
+                ? $"　時裝／外觀未還原：{string.Join("、", _lookMissing)}" : "";
             string attrNote = _skippedAttr != null ? $"　{_skippedAttr}" : "";
 
             // 換到位的件數＝第一輪算出的差異件數 − 最後仍缺的件數。
             // 有缺漏時也要報——只講「缺了什麼」不講「做成了什麼」會讓人以為根本沒換裝。
             int gearOk = Math.Max(0, _gearPlanned - _gearMissing.Count);
             string gearDone = gearOk > 0 ? $"／換裝 {gearOk} 件" : "";
+            int lookOk = Math.Max(0, _lookPlanned - _lookMissing.Count);
+            if (lookOk > 0) gearDone += $"／時裝外觀 {lookOk} 項";
+            gearNote += lookNote;
+            // 勾了時裝／外觀但這組沒資料：不是失敗，但一定要講，否則玩家以為功能沒動
+            string lookHint = MissingLookNote() is string h ? $"　{h}" : "";
 
-            if ((failed == null || failed.Count == 0) && _gearMissing.Count == 0 && _skippedAttr == null)
+            if ((failed == null || failed.Count == 0) && _gearMissing.Count == 0 && _lookMissing.Count == 0 && _skippedAttr == null)
             {
-                Plugin.Logger.LogInfo($"[Build] 還原完成：「{_target.Name}」{_target.Skills.Count} 技能／{total} 快捷格{gearDone}");
-                UiRow.SetStatus($"還原完成：「{_target.Name}」（{_target.Skills.Count} 技能／{total} 快捷格{gearDone}）");
+                Plugin.Logger.LogInfo($"[Build] 還原完成：「{_target.Name}」{_target.Skills.Count} 技能／{total} 快捷格{gearDone}{lookHint}");
+                UiRow.SetStatus($"還原完成：「{_target.Name}」（{_target.Skills.Count} 技能／{total} 快捷格{gearDone}）{lookHint}",
+                    lookHint.Length > 0);
             }
             else
             {
                 string list = failed == null || failed.Count == 0
                     ? "" : "未綁上：" + string.Join("、", failed.Select(f => $"#{f.Slot + 1}={f.Id}"));
                 Plugin.Logger.LogWarning($"[Build] 還原完成：{_target.Skills.Count} 技能／快捷 {ok}/{total}{gearDone}。" +
-                    $"有缺漏：{list}{gearNote}{attrNote}");
+                    $"有缺漏：{list}{gearNote}{attrNote}{lookHint}");
                 UiRow.SetStatus($"還原完成：{_target.Skills.Count} 技能／快捷 {ok}/{total}{gearDone}。" +
-                    $"{list}{gearNote}{attrNote}", true);
+                    $"{list}{gearNote}{attrNote}{lookHint}", true);
             }
+
+            Diag.Dump("還原完成");
+            Core.PostDumpAt = Time.unscaledTime + 2f;
 
             _step = Step.Idle;
             _target = null;
@@ -1643,6 +2589,11 @@ namespace SpiritValeSkillBuilds
                             _gearMissing.Add($"{act.Id}(需求不符)");
                             return false;
                         }
+                        // ApplyEquip_S 伺服器端只從背包撈：已穿在身上（別的欄位）的送過去會被靜默忽略。
+                        // 監控用：印出物品實際位置，逾時時對得上原因。
+                        string where = Gear.Locate(data, act.Uid);
+                        if (Plugin.CfgDiagnostic.Value || where != "背包")
+                            Plugin.Logger.LogInfo($"[Build] 送出換裝：{act}；物品位置={where}；飾品現況 {Gear.AccState(data)}");
                         // 重裝武器走另一條入口（ApplyEquip 會擋下並跳訊息）
                         if (cfg != null && EquipUtil.IsHeavy(cfg.Type)) save.ApplyHeavyEquip(equip);
                         else save.ApplyEquip(equip);
@@ -1756,8 +2707,10 @@ namespace SpiritValeSkillBuilds
         private const string OkName = "SBOk";
         private const string CancelName = "SBCancel";
         private const string DeleteName = "SBDelete";
+        private const string SaveLookName = "SBSaveLook";
         private static float _deleteConfirmUntil;
         private static TextMeshProUGUI _deleteLabel;
+        private static TextMeshProUGUI _saveLookLabel;
         private static string _builtUid;
         private static GameObject _panel;
         private static readonly List<TextMeshProUGUI> _chkLabels = new List<TextMeshProUGUI>();
@@ -1766,9 +2719,10 @@ namespace SpiritValeSkillBuilds
         private static int _editIdx = -1;
         private static PresetFlags _editFlags;
 
-        /// <summary>面板上的勾選項，順序＝畫面由上到下。</summary>
+        /// <summary>面板上的勾選項，順序＝畫面由上到下。最後一項固定是「卸下快照沒有的」。</summary>
         private static readonly string[] ChkText =
-            { "技能點", "快捷列", "能力點", "裝備", "神器", "魔導書", "卸下快照沒有的裝備欄" };
+            { "技能點", "快捷列", "能力點", "裝備", "神器", "魔導書",
+              "時裝（含坐騎／寵物）", "外觀（長相）", "卸下快照沒有的裝備／時裝欄" };
 
         private static bool GetFlag(PresetFlags f, int i) => i switch
         {
@@ -1778,6 +2732,8 @@ namespace SpiritValeSkillBuilds
             3 => f.Equips,
             4 => f.Artifacts,
             5 => f.Grimoires,
+            6 => f.Cosmetics,
+            7 => f.Appearance,
             _ => f.ClearUnlisted,
         };
 
@@ -1791,6 +2747,8 @@ namespace SpiritValeSkillBuilds
                 case 3: f.Equips = !f.Equips; break;
                 case 4: f.Artifacts = !f.Artifacts; break;
                 case 5: f.Grimoires = !f.Grimoires; break;
+                case 6: f.Cosmetics = !f.Cosmetics; break;
+                case 7: f.Appearance = !f.Appearance; break;
                 default: f.ClearUnlisted = !f.ClearUnlisted; break;
             }
         }
@@ -1915,18 +2873,8 @@ namespace SpiritValeSkillBuilds
                 return;
             }
             string uid = Core.SafeUid(save);
-            var src = Store.GetFlags(uid, index);
             // 編輯的是副本，按取消就原封不動
-            _editFlags = new PresetFlags
-            {
-                Skills = src.Skills,
-                Hotbar = src.Hotbar,
-                Attributes = src.Attributes,
-                Equips = src.Equips,
-                Artifacts = src.Artifacts,
-                Grimoires = src.Grimoires,
-                ClearUnlisted = src.ClearUnlisted,
-            };
+            _editFlags = Store.GetFlags(uid, index).Clone();
             _editIdx = index;
 
             try
@@ -1935,7 +2883,9 @@ namespace SpiritValeSkillBuilds
                 string name = Store.GetName(uid, index);
                 if (_panelTitle != null)
                     _panelTitle.text = $"編輯第 {index + 1} 組" +
-                        (p == null ? "（尚未存入配置）" : $"　{p.Skills.Count} 技能／{p.Equips.Count} 裝備");
+                        (p == null ? "（尚未存入配置）" :
+                            $"　{p.Skills.Count} 技能／{p.Equips.Count} 裝備" +
+                            (p.Cosmetics != null ? $"／{p.Cosmetics.Count} 時裝" : "／舊快照無時裝外觀"));
                 _panel.SetActive(true);
                 if (_input != null)
                 {
@@ -2000,6 +2950,7 @@ namespace SpiritValeSkillBuilds
                 if (hit == OkName) { ClosePanel(save, true); return; }
                 if (hit == CancelName) { ClosePanel(save, false); return; }
                 if (hit == DeleteName) { ClickDelete(save); return; }
+                if (hit == SaveLookName) { ClickSaveLook(save); return; }
                 if (hit.StartsWith(ChkPrefix, StringComparison.Ordinal) &&
                     int.TryParse(hit.Substring(ChkPrefix.Length), out int idx) &&
                     idx >= 0 && idx < ChkText.Length)
@@ -2013,6 +2964,47 @@ namespace SpiritValeSkillBuilds
                 Plugin.Logger.LogWarning($"[Build] 面板互動失敗：{ex.Message}");
                 ClosePanel(save, false);
             }
+        }
+
+        /// <summary>
+        /// 只把「目前身上的時裝／外觀」寫進這組（技能／裝備／能力點／快捷列原封不動），
+        /// 並順手把這組的「時裝」「外觀」勾起來——會按這顆的人就是要它跟著還原。
+        /// 面板不關，讓玩家看得到勾選狀態變了。
+        /// </summary>
+        private static void ClickSaveLook(PlayerSave save)
+        {
+            int idx = _editIdx;
+            string uid = Core.SafeUid(save);
+            if (save == null || idx < 0 || uid == null) return;
+
+            if (Store.Get(uid, idx) == null)
+            {
+                SetStatus("這組還沒存過配置，先 Shift+左鍵存一次整組。", true);
+                return;
+            }
+
+            var tmp = new Preset();
+            try { Look.Snapshot(save.Data, tmp); }
+            catch (Exception ex)
+            {
+                Plugin.Logger.LogWarning($"[Build] 讀取目前時裝／外觀失敗：{ex.Message}");
+                SetStatus("讀不到目前的時裝／外觀，詳見 log。", true);
+                return;
+            }
+            if (tmp.Cosmetics == null && tmp.Appearance == null)
+            {
+                SetStatus("讀不到目前的時裝／外觀，沒有存入。", true);
+                return;
+            }
+
+            _editFlags.Cosmetics = true;
+            _editFlags.Appearance = true;
+            Store.PutLook(uid, idx, tmp.Cosmetics, tmp.Appearance);
+            DrawPanel();
+            Refresh();
+            string name = Store.GetName(uid, idx) ?? $"Build {idx + 1}";
+            SetStatus($"已把目前的 {tmp.Cosmetics?.Count ?? 0} 時裝{(tmp.Appearance != null ? "／外觀" : "")} 存進「{name}」" +
+                "（其他不動），並勾選時裝／外觀。");
         }
 
         /// <summary>刪除要點兩次（第一次變成「確定刪除?」，3 秒內再點才真的刪）。</summary>
@@ -2067,7 +3059,7 @@ namespace SpiritValeSkillBuilds
             Refresh();
             int on = 0;
             for (int i = 0; i < ChkText.Length - 1; i++) if (GetFlag(_editFlags, i)) on++;
-            SetStatus($"第 {idx + 1} 組已更新：勾選 {on}/6 類。");
+            SetStatus($"第 {idx + 1} 組已更新：勾選 {on}/{ChkText.Length - 1} 類。");
         }
 
         /// <summary>cfg 微調值變動時跟著移動（改設定不用重開遊戲）。</summary>
@@ -2104,7 +3096,8 @@ namespace SpiritValeSkillBuilds
                 {
                     // 有取消勾選任何一類就加個 * 提示「這組是部分還原」
                     var u = p.Use ?? new PresetFlags();
-                    bool partial = !(u.Skills && u.Hotbar && u.Attributes && u.Equips && u.Artifacts && u.Grimoires);
+                    bool partial = !(u.Skills && u.Hotbar && u.Attributes && u.Equips && u.Artifacts && u.Grimoires &&
+                                     u.Cosmetics && u.Appearance);
                     _labels[i].text = $"{i + 1} {p.Name}" + (partial ? " *" : "");
                     _labels[i].color = TxNormal;
                 }
@@ -2259,7 +3252,7 @@ namespace SpiritValeSkillBuilds
                 const float PanelW = 340f;
                 const float RowH = 30f;
                 const float Pad = 12f;
-                float panelH = Pad + 26f + 6f + BtnH + 8f + ChkText.Length * RowH + 10f + 32f + Pad;
+                float panelH = Pad + 26f + 6f + BtnH + 8f + ChkText.Length * RowH + 10f + 32f + 8f + 32f + Pad;
 
                 var panel = new GameObject("SkillBuildsPanel");
                 panel.transform.SetParent(parent, false);
@@ -2314,6 +3307,13 @@ namespace SpiritValeSkillBuilds
                 }
 
                 y -= 10f;
+                // 「只把目前的打扮存進這組」：升級後舊 Build 沒有時裝／外觀資料，要補得先還原那組、
+                // 穿好、再整組重存——太繞。這顆只更新時裝／外觀兩塊，技能／裝備／能力點原封不動。
+                _saveLookLabel = MakeButton(panel.transform, SaveLookName, "把目前的時裝／外觀存進這組（其他不動）",
+                    font, new Vector2(Pad, y), new Vector2(PanelW - Pad * 2, 32f));
+                _saveLookLabel.fontSize = 16f;
+                y -= 32f + 8f;
+
                 float bw = (PanelW - Pad * 2 - 16f) / 3f;
                 MakeButton(panel.transform, OkName, "確定", font, new Vector2(Pad, y), new Vector2(bw, 32f));
                 MakeButton(panel.transform, CancelName, "取消", font,
@@ -2447,14 +3447,17 @@ namespace SpiritValeSkillBuilds
                 if (go == null) return null;
 
                 // 吃 raycast 的是 Image（掛在命名物件上），label 不吃；
-                // 往上找幾層是為了保險（例如 TMP_InputField 的內部子物件）
+                // 往上找幾層是為了保險（例如 TMP_InputField 的內部子物件）。
+                // 每個可點的名字都要列在這裡——v1.0.1 漏了 DeleteName，刪除鈕的點擊
+                // 一路往上找到 SkillBuildsPanel 就回傳面板名，TickPanel 永遠對不上「刪除」。
                 var t = go.transform;
                 for (int d = 0; d < 3 && t != null; d++, t = t.parent)
                 {
                     string n = t.name;
                     if (n.StartsWith(BtnPrefix, StringComparison.Ordinal) ||
                         n.StartsWith(ChkPrefix, StringComparison.Ordinal) ||
-                        n == OkName || n == CancelName || n == "SkillBuildsPanel")
+                        n == OkName || n == CancelName || n == DeleteName || n == SaveLookName ||
+                        n == "SkillBuildsPanel")
                         return n;
                 }
             }
